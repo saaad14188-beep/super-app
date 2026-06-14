@@ -908,7 +908,7 @@ function mergeLive(store, live) {
   s.liveAt = live.fetchedAt;
   s.liveSource = live.source;
   if (sd.etaText) s.eta = sd.etaText;
-  s.menu.forEach((g) => g.items.forEach((it) => {
+  (s.menu || []).forEach((g) => g.items.forEach((it) => {
     if (sd.items && sd.items[it.id] != null) {
       it.p = sd.items[it.id];
       it.live = true;
