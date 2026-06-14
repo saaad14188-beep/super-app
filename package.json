@@ -1,0 +1,9 @@
+{
+  "name": "super-app",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "bundle.js",
+  "scripts": { "start": "node bundle.js" },
+  "dependencies": { "express": "^4.19.2" },
+  "engines": { "node": ">=18" }
+}
