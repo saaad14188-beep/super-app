@@ -1,287 +1,18 @@
 // deploy-entry.js
 import express5 from "express";
-import path4 from "path";
-import fs4 from "fs";
+import path3 from "path";
+import fs3 from "fs";
 
 // src/auth.js
 import crypto from "crypto";
-import fs2 from "fs";
-import path2 from "path";
-import { fileURLToPath as fileURLToPath2 } from "url";
-
-// src/db.js
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-var __dirname = path.dirname(fileURLToPath(import.meta.url));
-var DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
-var FILE = path.join(DATA_DIR, "db.json");
-function load() {
-  try {
-    return JSON.parse(fs.readFileSync(FILE, "utf8"));
-  } catch {
-    return { users: [], seq: 0 };
-  }
-}
-var db = load();
-function persist() {
-  fs.mkdirSync(path.dirname(FILE), { recursive: true });
-  const tmp = FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-  fs.renameSync(tmp, FILE);
-}
-var listUsers = () => db.users;
-var userCount = () => db.users.length;
-var getById = (id) => db.users.find((u) => u.id === id);
-var getByEmail = (email) => db.users.find((u) => u.email === String(email || "").toLowerCase());
-function createUser(data) {
-  db.seq += 1;
-  const user = { id: db.seq, ...data };
-  db.users.push(user);
-  persist();
-  return user;
-}
-function updateUser(id, patch) {
-  const u = getById(id);
-  if (!u) return null;
-  Object.assign(u, patch);
-  persist();
-  return u;
-}
-function deleteUser(id) {
-  const i = db.users.findIndex((u) => u.id === id);
-  if (i < 0) return false;
-  db.users.splice(i, 1);
-  persist();
-  return true;
-}
 
-// src/auth.js
-var __dirname2 = path2.dirname(fileURLToPath2(import.meta.url));
-var SECRET = process.env.SESSION_SECRET || loadOrCreateSecret();
-function loadOrCreateSecret() {
-  const f = path2.join(process.env.DATA_DIR || path2.join(process.cwd(), "data"), "secret.key");
-  try {
-    return fs2.readFileSync(f, "utf8");
-  } catch {
-    const s = crypto.randomBytes(32).toString("hex");
-    fs2.mkdirSync(path2.dirname(f), { recursive: true });
-    fs2.writeFileSync(f, s);
-    return s;
-  }
-}
-function hashPassword(pw) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(pw, salt, 64).toString("hex");
-  return `${salt}:${hash}`;
-}
-function verifyPassword(pw, stored) {
-  if (!stored || !stored.includes(":")) return false;
-  const [salt, hash] = stored.split(":");
-  const h = crypto.scryptSync(pw, salt, 64).toString("hex");
-  const a = Buffer.from(h), b = Buffer.from(hash);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-var genCode = () => String(crypto.randomInt(0, 1e6)).padStart(6, "0");
-var hashCode = (code) => crypto.createHash("sha256").update(String(code)).digest("hex");
-var b64u = (s) => Buffer.from(s).toString("base64url");
-var ub64u = (s) => Buffer.from(s, "base64url").toString();
-function signToken(payload) {
-  const body = b64u(JSON.stringify(payload));
-  const sig = crypto.createHmac("sha256", SECRET).update(body).digest("base64url");
-  return `${body}.${sig}`;
-}
-function verifyToken(token) {
-  if (!token || !token.includes(".")) return null;
-  const [body, sig] = token.split(".");
-  const exp = crypto.createHmac("sha256", SECRET).update(body).digest("base64url");
-  if (sig.length !== exp.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(exp))) return null;
-  try {
-    const p = JSON.parse(ub64u(body));
-    if (p.exp && Date.now() > p.exp) return null;
-    return p;
-  } catch {
-    return null;
-  }
-}
-var COOKIE = "sa_session";
-var WEEK = 1e3 * 60 * 60 * 24 * 7;
-function setSession(res, uid) {
-  const token = signToken({ uid, exp: Date.now() + WEEK });
-  const secure = process.env.COOKIE_SECURE === "true" ? " Secure;" : "";
-  res.setHeader("Set-Cookie", `${COOKIE}=${token}; HttpOnly; Path=/; Max-Age=${WEEK / 1e3}; SameSite=Lax;${secure}`);
-}
-function clearSession(res) {
-  res.setHeader("Set-Cookie", `${COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`);
-}
-function parseCookies(req) {
-  const out = {};
-  (req.headers.cookie || "").split(";").forEach((p) => {
-    const i = p.indexOf("=");
-    if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
-  });
-  return out;
-}
-function authMiddleware(req, res, next) {
-  const t = parseCookies(req)[COOKIE];
-  const p = t ? verifyToken(t) : null;
-  req.user = p ? getById(p.uid) || null : null;
-  next();
-}
-var requireVerified = (req, res, next) => !req.user ? res.status(401).json({ error: "\u064A\u062C\u0628 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644" }) : !req.user.verified ? res.status(403).json({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u063A\u064A\u0631 \u0645\u0641\u0639\u0651\u0644" }) : next();
-var requireAdmin = (req, res, next) => req.user && req.user.isAdmin ? next() : res.status(403).json({ error: "\u0635\u0644\u0627\u062D\u064A\u0629 \u0627\u0644\u0645\u062F\u064A\u0631 \u0645\u0637\u0644\u0648\u0628\u0629" });
-function publicUser(u) {
-  if (!u) return null;
-  const { password, codeHash, codeExp, codePurpose, codeAttempts, ...safe } = u;
-  return safe;
-}
-
-// src/routes/auth.routes.js
-import express from "express";
-
-// src/mailer.js
-var SMTP = process.env.SMTP_HOST;
-var mailMode = () => SMTP ? "smtp" : "dev";
-async function sendMail({ to, subject, text }) {
-  if (!SMTP) {
-    console.log(`
-\u{1F4E7} [\u0628\u0631\u064A\u062F \u062A\u062C\u0631\u064A\u0628\u064A] \u0625\u0644\u0649: ${to}
-   \u0627\u0644\u0645\u0648\u0636\u0648\u0639: ${subject}
-   ${text}
-`);
-    return { dev: true };
-  }
-  const nodemailer = (await import("nodemailer")).default;
-  const transport = nodemailer.createTransport({
-    host: SMTP,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === "true",
-    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : void 0
-  });
-  await transport.sendMail({ from: process.env.MAIL_FROM || process.env.SMTP_USER, to, subject, text });
-  return { dev: false };
-}
-async function sendCode(to, code, purpose) {
-  const subject = purpose === "reset" ? "\u0631\u0645\u0632 \u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u2014 \u0633\u0648\u0628\u0631 \u0622\u0628" : "\u0631\u0645\u0632 \u062A\u0641\u0639\u064A\u0644 \u062D\u0633\u0627\u0628\u0643 \u2014 \u0633\u0648\u0628\u0631 \u0622\u0628";
-  const text = `\u0645\u0631\u062D\u0628\u064B\u0627 \u{1F44B}
-\u0631\u0645\u0632\u0643 \u0647\u0648: ${code}
-\u0635\u0627\u0644\u062D \u0644\u0645\u062F\u0629 \u0661\u0665 \u062F\u0642\u064A\u0642\u0629.
-
-\u0625\u0646 \u0644\u0645 \u062A\u0637\u0644\u0628 \u0647\u0630\u0627 \u0627\u0644\u0631\u0645\u0632 \u0641\u062A\u062C\u0627\u0647\u0644 \u0627\u0644\u0631\u0633\u0627\u0644\u0629.`;
-  return sendMail({ to, subject, text });
-}
-
-// src/routes/auth.routes.js
-var router = express.Router();
-var CODE_TTL = 15 * 60 * 1e3;
-var emailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || "");
-var norm = (e) => String(e || "").trim().toLowerCase();
-router.post("/register", async (req, res) => {
-  const name = (req.body?.name || "").trim();
-  const email = norm(req.body?.email);
-  const password = req.body?.password || "";
-  if (!name) return res.status(400).json({ error: "\u0627\u0644\u0627\u0633\u0645 \u0645\u0637\u0644\u0648\u0628" });
-  if (!emailOk(email)) return res.status(400).json({ error: "\u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u063A\u064A\u0631 \u0635\u062D\u064A\u062D" });
-  if (password.length < 8) return res.status(400).json({ error: "\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0668 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644" });
-  if (getByEmail(email)) return res.status(409).json({ error: "\u0647\u0630\u0627 \u0627\u0644\u0628\u0631\u064A\u062F \u0645\u0633\u062C\u0651\u0644 \u0645\u0633\u0628\u0642\u064B\u0627" });
-  const code = genCode();
-  const isAdmin = userCount() === 0 || email === norm(process.env.ADMIN_EMAIL);
-  createUser({
-    name,
-    email,
-    password: hashPassword(password),
-    verified: false,
-    isAdmin,
-    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-    address: "\u062D\u064A \u0627\u0644\u0645\u0648\u0646\u0633\u064A\u0629\u060C \u0627\u0644\u0631\u064A\u0627\u0636",
-    favorites: [],
-    codeHash: hashCode(code),
-    codeExp: Date.now() + CODE_TTL,
-    codePurpose: "verify",
-    codeAttempts: 0
-  });
-  const m = await sendCode(email, code, "verify");
-  res.json({ ok: true, email, mode: mailMode(), devCode: m.dev ? code : void 0 });
-});
-router.post("/verify", (req, res) => {
-  const email = norm(req.body?.email);
-  const code = req.body?.code || "";
-  const u = getByEmail(email);
-  if (!u) return res.status(404).json({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
-  if (u.verified) {
-    setSession(res, u.id);
-    return res.json({ ok: true, user: publicUser(u) });
-  }
-  if (!u.codeHash || u.codePurpose !== "verify" || Date.now() > u.codeExp)
-    return res.status(400).json({ error: "\u0627\u0646\u062A\u0647\u062A \u0635\u0644\u0627\u062D\u064A\u0629 \u0627\u0644\u0631\u0645\u0632\u060C \u0627\u0637\u0644\u0628 \u0631\u0645\u0632\u064B\u0627 \u062C\u062F\u064A\u062F\u064B\u0627" });
-  if ((u.codeAttempts || 0) >= 5) return res.status(429).json({ error: "\u0645\u062D\u0627\u0648\u0644\u0627\u062A \u0643\u062B\u064A\u0631\u0629\u060C \u0627\u0637\u0644\u0628 \u0631\u0645\u0632\u064B\u0627 \u062C\u062F\u064A\u062F\u064B\u0627" });
-  if (hashCode(code) !== u.codeHash) {
-    updateUser(u.id, { codeAttempts: (u.codeAttempts || 0) + 1 });
-    return res.status(400).json({ error: "\u0627\u0644\u0631\u0645\u0632 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D" });
-  }
-  updateUser(u.id, { verified: true, codeHash: null, codeExp: null, codePurpose: null, codeAttempts: 0 });
-  setSession(res, u.id);
-  res.json({ ok: true, user: publicUser(getById(u.id)) });
-});
-router.post("/resend", async (req, res) => {
-  const email = norm(req.body?.email);
-  const u = getByEmail(email);
-  if (!u) return res.status(404).json({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
-  if (u.verified) return res.status(400).json({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u0645\u0641\u0639\u0651\u0644 \u0628\u0627\u0644\u0641\u0639\u0644" });
-  const code = genCode();
-  updateUser(u.id, { codeHash: hashCode(code), codeExp: Date.now() + CODE_TTL, codePurpose: "verify", codeAttempts: 0 });
-  const m = await sendCode(email, code, "verify");
-  res.json({ ok: true, devCode: m.dev ? code : void 0 });
-});
-router.post("/login", (req, res) => {
-  const email = norm(req.body?.email);
-  const u = getByEmail(email);
-  if (!u || !verifyPassword(req.body?.password || "", u.password))
-    return res.status(401).json({ error: "\u0627\u0644\u0628\u0631\u064A\u062F \u0623\u0648 \u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629" });
-  if (!u.verified) return res.status(403).json({ error: "\u0641\u0639\u0651\u0644 \u062D\u0633\u0627\u0628\u0643 \u0623\u0648\u0644\u064B\u0627", needVerify: true, email });
-  setSession(res, u.id);
-  res.json({ ok: true, user: publicUser(u) });
-});
-router.post("/logout", (req, res) => {
-  clearSession(res);
-  res.json({ ok: true });
-});
-router.get("/me", (req, res) => res.json({ user: publicUser(req.user) }));
-router.post("/forgot", async (req, res) => {
-  const email = norm(req.body?.email);
-  const u = getByEmail(email);
-  if (u) {
-    const code = genCode();
-    updateUser(u.id, { codeHash: hashCode(code), codeExp: Date.now() + CODE_TTL, codePurpose: "reset", codeAttempts: 0 });
-    const m = await sendCode(email, code, "reset");
-    return res.json({ ok: true, devCode: m.dev ? code : void 0 });
-  }
-  res.json({ ok: true });
-});
-router.post("/reset", (req, res) => {
-  const email = norm(req.body?.email);
-  const code = req.body?.code || "";
-  const password = req.body?.password || "";
-  const u = getByEmail(email);
-  if (!u) return res.status(400).json({ error: "\u062A\u0639\u0630\u0651\u0631 \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u062A\u0639\u064A\u064A\u0646" });
-  if (!u.codeHash || u.codePurpose !== "reset" || Date.now() > u.codeExp)
-    return res.status(400).json({ error: "\u0627\u0646\u062A\u0647\u062A \u0635\u0644\u0627\u062D\u064A\u0629 \u0627\u0644\u0631\u0645\u0632" });
-  if ((u.codeAttempts || 0) >= 5) return res.status(429).json({ error: "\u0645\u062D\u0627\u0648\u0644\u0627\u062A \u0643\u062B\u064A\u0631\u0629" });
-  if (hashCode(code) !== u.codeHash) {
-    updateUser(u.id, { codeAttempts: (u.codeAttempts || 0) + 1 });
-    return res.status(400).json({ error: "\u0627\u0644\u0631\u0645\u0632 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D" });
-  }
-  if (password.length < 8) return res.status(400).json({ error: "\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0668 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644" });
-  updateUser(u.id, { password: hashPassword(password), verified: true, codeHash: null, codeExp: null, codePurpose: null, codeAttempts: 0 });
-  res.json({ ok: true });
-});
-var auth_routes_default = router;
-
-// src/routes/app.routes.js
-import express2 from "express";
+// src/db.js
+import pg from "pg";
 
 // src/data.js
-var LOCATION = "\u062D\u064A \u0627\u0644\u0645\u0648\u0646\u0633\u064A\u0629\u060C \u0627\u0644\u0631\u064A\u0627\u0636";
 var APPS = {
   hungerstation: {
     name: "\u0647\u0646\u0642\u0631\u0633\u062A\u064A\u0634\u0646",
@@ -358,6 +89,11 @@ var APPS_ETA = {
   mrsool: "30\u201345 \u062F",
   thechefz: "35\u201350 \u062F"
 };
+var COUPONS = [
+  { code: "WELCOME10", type: "percent", value: 10, cap: 15, min_order: 0, active: true, descr: "\u062E\u0635\u0645 \u0661\u0660\u066A \u0639\u0644\u0649 \u0637\u0644\u0628\u0643 (\u062D\u062A\u0649 \u0661\u0665 \u0631.\u0633)" },
+  { code: "SAVE5", type: "amount", value: 5, cap: 0, min_order: 30, active: true, descr: "\u062E\u0635\u0645 \u0665 \u0631.\u0633 \u0639\u0644\u0649 \u0627\u0644\u0637\u0644\u0628\u0627\u062A \u0641\u0648\u0642 \u0663\u0660 \u0631.\u0633" },
+  { code: "SUPER20", type: "percent", value: 20, cap: 25, min_order: 50, active: true, descr: "\u062E\u0635\u0645 \u0662\u0660\u066A \u0644\u0644\u0637\u0644\u0628\u0627\u062A \u0641\u0648\u0642 \u0665\u0660 \u0631.\u0633 (\u062D\u062A\u0649 \u0662\u0665 \u0631.\u0633)" }
+];
 var STORES = [
   {
     id: "mcd",
@@ -478,6 +214,597 @@ var STORES = [
   }
 ];
 
+// src/db.js
+var pool;
+function getPool() {
+  if (!pool) {
+    const cs = process.env.DATABASE_URL;
+    pool = new pg.Pool({
+      connectionString: cs,
+      ssl: cs && !/localhost|127\.0\.0\.1/.test(cs) ? { rejectUnauthorized: false } : false,
+      max: 5
+    });
+  }
+  return pool;
+}
+var q = (text, params) => getPool().query(text, params);
+async function init() {
+  await q(`CREATE TABLE IF NOT EXISTS users(
+    id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL, verified BOOLEAN DEFAULT false, is_admin BOOLEAN DEFAULT false,
+    address TEXT DEFAULT '\u062D\u064A \u0627\u0644\u0645\u0648\u0646\u0633\u064A\u0629\u060C \u0627\u0644\u0631\u064A\u0627\u0636', created_at TIMESTAMPTZ DEFAULT now(),
+    code_hash TEXT, code_exp BIGINT, code_purpose TEXT, code_attempts INT DEFAULT 0)`);
+  await q(`CREATE TABLE IF NOT EXISTS favorites(
+    user_id INT REFERENCES users(id) ON DELETE CASCADE, store_id TEXT, PRIMARY KEY(user_id, store_id))`);
+  await q(`CREATE TABLE IF NOT EXISTS restaurants(
+    id TEXT PRIMARY KEY, kind TEXT, name TEXT, cat TEXT, color TEXT, rating NUMERIC,
+    eta TEXT, logo TEXT, apps JSONB, active BOOLEAN DEFAULT true, sort INT DEFAULT 0)`);
+  await q(`CREATE TABLE IF NOT EXISTS menu_items(
+    id SERIAL PRIMARY KEY, restaurant_id TEXT REFERENCES restaurants(id) ON DELETE CASCADE,
+    grp TEXT, item_key TEXT, name TEXT, descr TEXT, emoji TEXT, price NUMERIC, sort INT DEFAULT 0)`);
+  await q(`CREATE TABLE IF NOT EXISTS coupons(
+    code TEXT PRIMARY KEY, type TEXT, value NUMERIC, cap NUMERIC DEFAULT 0,
+    min_order NUMERIC DEFAULT 0, active BOOLEAN DEFAULT true, descr TEXT)`);
+  await q(`CREATE TABLE IF NOT EXISTS orders(
+    id SERIAL PRIMARY KEY, user_id INT REFERENCES users(id) ON DELETE CASCADE,
+    restaurant_id TEXT, restaurant_name TEXT, app_id TEXT, app_name TEXT,
+    items JSONB, subtotal NUMERIC, delivery NUMERIC, service NUMERIC, discount NUMERIC,
+    total NUMERIC, coupon TEXT, address TEXT, status TEXT DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+  await q(`CREATE TABLE IF NOT EXISTS order_events(
+    id SERIAL PRIMARY KEY, order_id INT REFERENCES orders(id) ON DELETE CASCADE,
+    status TEXT, at TIMESTAMPTZ DEFAULT now())`);
+  await q(`CREATE TABLE IF NOT EXISTS reviews(
+    id SERIAL PRIMARY KEY, user_id INT REFERENCES users(id) ON DELETE CASCADE,
+    restaurant_id TEXT, order_id INT, rating INT, comment TEXT, created_at TIMESTAMPTZ DEFAULT now())`);
+  await q(`CREATE TABLE IF NOT EXISTS notifications(
+    id SERIAL PRIMARY KEY, user_id INT REFERENCES users(id) ON DELETE CASCADE,
+    text TEXT, icon TEXT DEFAULT '\u{1F514}', read BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())`);
+  await seed();
+}
+async function seed() {
+  const { rows } = await q(`SELECT COUNT(*)::int AS c FROM restaurants`);
+  if (rows[0].c === 0) {
+    for (let i = 0; i < STORES.length; i++) {
+      const s = STORES[i];
+      await q(
+        `INSERT INTO restaurants(id,kind,name,cat,color,rating,eta,logo,apps,active,sort)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,true,$10) ON CONFLICT (id) DO NOTHING`,
+        [s.id, s.kind, s.name, s.cat, s.color, s.rating, s.eta, s.logo, JSON.stringify(s.on), i]
+      );
+      let order = 0;
+      for (const g of s.menu) for (const it of g.items) {
+        await q(`INSERT INTO menu_items(restaurant_id,grp,item_key,name,descr,emoji,price,sort)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [s.id, g.g, it.id, it.n, it.d, it.e, it.p, order++]);
+      }
+    }
+  }
+  const c = await q(`SELECT COUNT(*)::int AS c FROM coupons`);
+  if (c.rows[0].c === 0) {
+    for (const cp of COUPONS) {
+      await q(
+        `INSERT INTO coupons(code,type,value,cap,min_order,active,descr)
+        VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (code) DO NOTHING`,
+        [cp.code, cp.type, cp.value, cp.cap, cp.min_order, cp.active, cp.descr]
+      );
+    }
+  }
+}
+var num = (v) => v == null ? v : Number(v);
+async function getByEmail(email) {
+  const { rows } = await q(`SELECT * FROM users WHERE email=$1`, [String(email || "").toLowerCase()]);
+  return rows[0] ? mapUser(rows[0]) : null;
+}
+async function getById(id) {
+  const { rows } = await q(`SELECT * FROM users WHERE id=$1`, [id]);
+  return rows[0] ? mapUser(rows[0]) : null;
+}
+function mapUser(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    email: r.email,
+    password: r.password,
+    verified: r.verified,
+    isAdmin: r.is_admin,
+    address: r.address,
+    createdAt: r.created_at,
+    codeHash: r.code_hash,
+    codeExp: num(r.code_exp),
+    codePurpose: r.code_purpose,
+    codeAttempts: r.code_attempts
+  };
+}
+async function userCount() {
+  const { rows } = await q(`SELECT COUNT(*)::int AS c FROM users`);
+  return rows[0].c;
+}
+async function listUsers() {
+  const { rows } = await q(`SELECT * FROM users ORDER BY id`);
+  return rows.map(mapUser);
+}
+async function createUser(u) {
+  const { rows } = await q(
+    `INSERT INTO users(name,email,password,verified,is_admin,address,code_hash,code_exp,code_purpose,code_attempts)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [
+      u.name,
+      u.email,
+      u.password,
+      !!u.verified,
+      !!u.isAdmin,
+      u.address || "\u062D\u064A \u0627\u0644\u0645\u0648\u0646\u0633\u064A\u0629\u060C \u0627\u0644\u0631\u064A\u0627\u0636",
+      u.codeHash || null,
+      u.codeExp || null,
+      u.codePurpose || null,
+      u.codeAttempts || 0
+    ]
+  );
+  return mapUser(rows[0]);
+}
+async function updateUser(id, patch) {
+  const map = {
+    name: "name",
+    address: "address",
+    verified: "verified",
+    isAdmin: "is_admin",
+    password: "password",
+    codeHash: "code_hash",
+    codeExp: "code_exp",
+    codePurpose: "code_purpose",
+    codeAttempts: "code_attempts"
+  };
+  const sets = [], vals = [];
+  let i = 1;
+  for (const [k, col] of Object.entries(map)) if (k in patch) {
+    sets.push(`${col}=$${i++}`);
+    vals.push(patch[k]);
+  }
+  if (!sets.length) return getById(id);
+  vals.push(id);
+  const { rows } = await q(`UPDATE users SET ${sets.join(",")} WHERE id=$${i} RETURNING *`, vals);
+  return rows[0] ? mapUser(rows[0]) : null;
+}
+async function deleteUser(id) {
+  await q(`DELETE FROM users WHERE id=$1`, [id]);
+  return true;
+}
+async function getFavorites(uid) {
+  const { rows } = await q(`SELECT store_id FROM favorites WHERE user_id=$1`, [uid]);
+  return rows.map((r) => r.store_id);
+}
+async function toggleFavorite(uid, storeId) {
+  const ex = await q(`SELECT 1 FROM favorites WHERE user_id=$1 AND store_id=$2`, [uid, storeId]);
+  if (ex.rows.length) await q(`DELETE FROM favorites WHERE user_id=$1 AND store_id=$2`, [uid, storeId]);
+  else await q(`INSERT INTO favorites(user_id,store_id) VALUES($1,$2)`, [uid, storeId]);
+  return getFavorites(uid);
+}
+function mapStore(r) {
+  return {
+    id: r.id,
+    kind: r.kind,
+    name: r.name,
+    cat: r.cat,
+    color: r.color,
+    rating: num(r.rating),
+    eta: r.eta,
+    logo: r.logo,
+    on: Array.isArray(r.apps) ? r.apps : r.apps || [],
+    active: r.active
+  };
+}
+async function listRestaurants(includeInactive = false) {
+  const { rows } = await q(`SELECT * FROM restaurants ${includeInactive ? "" : "WHERE active=true"} ORDER BY sort, name`);
+  return rows.map(mapStore);
+}
+async function getRestaurant(id) {
+  const { rows } = await q(`SELECT * FROM restaurants WHERE id=$1`, [id]);
+  if (!rows[0]) return null;
+  const s = mapStore(rows[0]);
+  const m = await q(`SELECT * FROM menu_items WHERE restaurant_id=$1 ORDER BY sort, id`, [id]);
+  const groups = {};
+  for (const it of m.rows) {
+    (groups[it.grp] = groups[it.grp] || []).push({ id: it.item_key, n: it.name, d: it.descr, e: it.emoji, p: num(it.price) });
+  }
+  s.menu = Object.entries(groups).map(([g, items]) => ({ g, items }));
+  return s;
+}
+async function createRestaurant(s) {
+  await q(
+    `INSERT INTO restaurants(id,kind,name,cat,color,rating,eta,logo,apps,active,sort)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,true,0)`,
+    [s.id, s.kind, s.name, s.cat, s.color || "#6D28D9", s.rating || 4.5, s.eta || "20\u201335 \u062F", s.logo || s.name.slice(0, 4), JSON.stringify(s.on || ["hungerstation", "jahez", "keeta", "toyou"])]
+  );
+  return getRestaurant(s.id);
+}
+async function updateRestaurant(id, patch) {
+  const map = { name: "name", cat: "cat", kind: "kind", color: "color", rating: "rating", eta: "eta", logo: "logo", active: "active" };
+  const sets = [], vals = [];
+  let i = 1;
+  for (const [k, col] of Object.entries(map)) if (k in patch) {
+    sets.push(`${col}=$${i++}`);
+    vals.push(patch[k]);
+  }
+  if (sets.length) {
+    vals.push(id);
+    await q(`UPDATE restaurants SET ${sets.join(",")} WHERE id=$${i}`, vals);
+  }
+  return getRestaurant(id);
+}
+async function deleteRestaurant(id) {
+  await q(`DELETE FROM restaurants WHERE id=$1`, [id]);
+  return true;
+}
+async function addMenuItem(rid, it) {
+  await q(`INSERT INTO menu_items(restaurant_id,grp,item_key,name,descr,emoji,price,sort)
+    VALUES($1,$2,$3,$4,$5,$6,$7,0)`, [rid, it.g || "\u0627\u0644\u0623\u0635\u0646\u0627\u0641", it.id || "it" + Date.now(), it.n, it.d || "", it.e || "\u{1F37D}\uFE0F", it.p]);
+}
+async function deleteMenuItem(rid, itemKey) {
+  await q(`DELETE FROM menu_items WHERE restaurant_id=$1 AND item_key=$2`, [rid, itemKey]);
+}
+function mapCoupon(r) {
+  return { code: r.code, type: r.type, value: num(r.value), cap: num(r.cap), min_order: num(r.min_order), active: r.active, descr: r.descr };
+}
+async function listCoupons() {
+  const { rows } = await q(`SELECT * FROM coupons ORDER BY code`);
+  return rows.map(mapCoupon);
+}
+async function getCoupon(code) {
+  const { rows } = await q(`SELECT * FROM coupons WHERE code=$1`, [String(code || "").toUpperCase()]);
+  return rows[0] ? mapCoupon(rows[0]) : null;
+}
+async function upsertCoupon(c) {
+  await q(
+    `INSERT INTO coupons(code,type,value,cap,min_order,active,descr) VALUES($1,$2,$3,$4,$5,$6,$7)
+    ON CONFLICT (code) DO UPDATE SET type=$2,value=$3,cap=$4,min_order=$5,active=$6,descr=$7`,
+    [String(c.code).toUpperCase(), c.type, c.value, c.cap || 0, c.min_order || 0, c.active !== false, c.descr || ""]
+  );
+  return getCoupon(c.code);
+}
+async function deleteCoupon(code) {
+  await q(`DELETE FROM coupons WHERE code=$1`, [String(code).toUpperCase()]);
+  return true;
+}
+function mapOrder(r) {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    restaurantId: r.restaurant_id,
+    restaurantName: r.restaurant_name,
+    appId: r.app_id,
+    appName: r.app_name,
+    items: r.items,
+    subtotal: num(r.subtotal),
+    delivery: num(r.delivery),
+    service: num(r.service),
+    discount: num(r.discount),
+    total: num(r.total),
+    coupon: r.coupon,
+    address: r.address,
+    status: r.status,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    userName: r.user_name,
+    userEmail: r.user_email
+  };
+}
+async function createOrder(o) {
+  const { rows } = await q(
+    `INSERT INTO orders(user_id,restaurant_id,restaurant_name,app_id,app_name,items,subtotal,delivery,service,discount,total,coupon,address,status)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending') RETURNING *`,
+    [o.userId, o.restaurantId, o.restaurantName, o.appId, o.appName, JSON.stringify(o.items), o.subtotal, o.delivery, o.service, o.discount, o.total, o.coupon || null, o.address]
+  );
+  await q(`INSERT INTO order_events(order_id,status) VALUES($1,'pending')`, [rows[0].id]);
+  return mapOrder(rows[0]);
+}
+async function listOrdersByUser(uid) {
+  const { rows } = await q(`SELECT * FROM orders WHERE user_id=$1 ORDER BY id DESC`, [uid]);
+  return rows.map(mapOrder);
+}
+async function getOrder(id) {
+  const { rows } = await q(`SELECT o.*, u.name AS user_name, u.email AS user_email FROM orders o LEFT JOIN users u ON u.id=o.user_id WHERE o.id=$1`, [id]);
+  if (!rows[0]) return null;
+  const o = mapOrder(rows[0]);
+  const ev = await q(`SELECT status, at FROM order_events WHERE order_id=$1 ORDER BY id`, [id]);
+  o.events = ev.rows.map((e) => ({ status: e.status, at: e.at }));
+  return o;
+}
+async function listAllOrders(limit = 200) {
+  const { rows } = await q(`SELECT o.*, u.name AS user_name, u.email AS user_email FROM orders o LEFT JOIN users u ON u.id=o.user_id ORDER BY o.id DESC LIMIT $1`, [limit]);
+  return rows.map(mapOrder);
+}
+async function updateOrderStatus(id, status) {
+  await q(`UPDATE orders SET status=$1, updated_at=now() WHERE id=$2`, [status, id]);
+  await q(`INSERT INTO order_events(order_id,status) VALUES($1,$2)`, [id, status]);
+  return getOrder(id);
+}
+async function addReview(rv) {
+  const { rows } = await q(
+    `INSERT INTO reviews(user_id,restaurant_id,order_id,rating,comment) VALUES($1,$2,$3,$4,$5) RETURNING *`,
+    [rv.userId, rv.restaurantId, rv.orderId || null, rv.rating, rv.comment || ""]
+  );
+  return rows[0];
+}
+async function reviewsByRestaurant(rid) {
+  const { rows } = await q(`SELECT r.rating, r.comment, r.created_at, u.name AS user_name FROM reviews r LEFT JOIN users u ON u.id=r.user_id WHERE restaurant_id=$1 ORDER BY r.id DESC LIMIT 50`, [rid]);
+  return rows.map((r) => ({ rating: r.rating, comment: r.comment, at: r.created_at, user: r.user_name }));
+}
+async function ratingStats(rid) {
+  const { rows } = await q(`SELECT COUNT(*)::int AS n, COALESCE(AVG(rating),0)::numeric(3,1) AS avg FROM reviews WHERE restaurant_id=$1`, [rid]);
+  return { count: rows[0].n, avg: num(rows[0].avg) };
+}
+async function userReviewedOrder(uid, orderId) {
+  const { rows } = await q(`SELECT 1 FROM reviews WHERE user_id=$1 AND order_id=$2`, [uid, orderId]);
+  return rows.length > 0;
+}
+async function addNotification(uid, text, icon = "\u{1F514}") {
+  await q(`INSERT INTO notifications(user_id,text,icon) VALUES($1,$2,$3)`, [uid, text, icon]);
+}
+async function listNotifications(uid) {
+  const { rows } = await q(`SELECT * FROM notifications WHERE user_id=$1 ORDER BY id DESC LIMIT 50`, [uid]);
+  return rows;
+}
+async function unreadCount(uid) {
+  const { rows } = await q(`SELECT COUNT(*)::int AS c FROM notifications WHERE user_id=$1 AND read=false`, [uid]);
+  return rows[0].c;
+}
+async function markNotificationsRead(uid) {
+  await q(`UPDATE notifications SET read=true WHERE user_id=$1`, [uid]);
+}
+
+// src/auth.js
+var __dirname = path.dirname(fileURLToPath(import.meta.url));
+var SECRET = process.env.SESSION_SECRET || loadOrCreateSecret();
+function loadOrCreateSecret() {
+  const f = path.join(process.env.DATA_DIR || path.join(process.cwd(), "data"), "secret.key");
+  try {
+    return fs.readFileSync(f, "utf8");
+  } catch {
+    const s = crypto.randomBytes(32).toString("hex");
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, s);
+    return s;
+  }
+}
+function hashPassword(pw) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(pw, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+function verifyPassword(pw, stored) {
+  if (!stored || !stored.includes(":")) return false;
+  const [salt, hash] = stored.split(":");
+  const h = crypto.scryptSync(pw, salt, 64).toString("hex");
+  const a = Buffer.from(h), b = Buffer.from(hash);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+var genCode = () => String(crypto.randomInt(0, 1e6)).padStart(6, "0");
+var hashCode = (code) => crypto.createHash("sha256").update(String(code)).digest("hex");
+var b64u = (s) => Buffer.from(s).toString("base64url");
+var ub64u = (s) => Buffer.from(s, "base64url").toString();
+function signToken(payload) {
+  const body = b64u(JSON.stringify(payload));
+  const sig = crypto.createHmac("sha256", SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+function verifyToken(token) {
+  if (!token || !token.includes(".")) return null;
+  const [body, sig] = token.split(".");
+  const exp = crypto.createHmac("sha256", SECRET).update(body).digest("base64url");
+  if (sig.length !== exp.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(exp))) return null;
+  try {
+    const p = JSON.parse(ub64u(body));
+    if (p.exp && Date.now() > p.exp) return null;
+    return p;
+  } catch {
+    return null;
+  }
+}
+var COOKIE = "sa_session";
+var WEEK = 1e3 * 60 * 60 * 24 * 7;
+function setSession(res, uid) {
+  const token = signToken({ uid, exp: Date.now() + WEEK });
+  const secure = process.env.COOKIE_SECURE === "true" ? " Secure;" : "";
+  res.setHeader("Set-Cookie", `${COOKIE}=${token}; HttpOnly; Path=/; Max-Age=${WEEK / 1e3}; SameSite=Lax;${secure}`);
+}
+function clearSession(res) {
+  res.setHeader("Set-Cookie", `${COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`);
+}
+function parseCookies(req) {
+  const out = {};
+  (req.headers.cookie || "").split(";").forEach((p) => {
+    const i = p.indexOf("=");
+    if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
+  });
+  return out;
+}
+async function authMiddleware(req, res, next) {
+  try {
+    const t = parseCookies(req)[COOKIE];
+    const p = t ? verifyToken(t) : null;
+    req.user = p ? await getById(p.uid) : null;
+  } catch (e) {
+    req.user = null;
+  }
+  next();
+}
+var requireVerified = (req, res, next) => !req.user ? res.status(401).json({ error: "\u064A\u062C\u0628 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644" }) : !req.user.verified ? res.status(403).json({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u063A\u064A\u0631 \u0645\u0641\u0639\u0651\u0644" }) : next();
+var requireAdmin = (req, res, next) => req.user && req.user.isAdmin ? next() : res.status(403).json({ error: "\u0635\u0644\u0627\u062D\u064A\u0629 \u0627\u0644\u0645\u062F\u064A\u0631 \u0645\u0637\u0644\u0648\u0628\u0629" });
+function publicUser(u) {
+  if (!u) return null;
+  const { password, codeHash, codeExp, codePurpose, codeAttempts, ...safe } = u;
+  return safe;
+}
+
+// src/routes/auth.routes.js
+import express from "express";
+
+// src/mailer.js
+var SMTP = process.env.SMTP_HOST;
+var mailMode = () => SMTP ? "smtp" : "dev";
+async function sendMail({ to, subject, text }) {
+  if (!SMTP) {
+    console.log(`
+\u{1F4E7} [\u0628\u0631\u064A\u062F \u062A\u062C\u0631\u064A\u0628\u064A] \u0625\u0644\u0649: ${to}
+   \u0627\u0644\u0645\u0648\u0636\u0648\u0639: ${subject}
+   ${text}
+`);
+    return { dev: true };
+  }
+  const nodemailer = (await import("nodemailer")).default;
+  const transport = nodemailer.createTransport({
+    host: SMTP,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === "true",
+    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : void 0
+  });
+  await transport.sendMail({ from: process.env.MAIL_FROM || process.env.SMTP_USER, to, subject, text });
+  return { dev: false };
+}
+async function sendCode(to, code, purpose) {
+  const subject = purpose === "reset" ? "\u0631\u0645\u0632 \u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u2014 \u0633\u0648\u0628\u0631 \u0622\u0628" : "\u0631\u0645\u0632 \u062A\u0641\u0639\u064A\u0644 \u062D\u0633\u0627\u0628\u0643 \u2014 \u0633\u0648\u0628\u0631 \u0622\u0628";
+  const text = `\u0645\u0631\u062D\u0628\u064B\u0627 \u{1F44B}
+\u0631\u0645\u0632\u0643 \u0647\u0648: ${code}
+\u0635\u0627\u0644\u062D \u0644\u0645\u062F\u0629 \u0661\u0665 \u062F\u0642\u064A\u0642\u0629.
+
+\u0625\u0646 \u0644\u0645 \u062A\u0637\u0644\u0628 \u0647\u0630\u0627 \u0627\u0644\u0631\u0645\u0632 \u0641\u062A\u062C\u0627\u0647\u0644 \u0627\u0644\u0631\u0633\u0627\u0644\u0629.`;
+  return sendMail({ to, subject, text });
+}
+
+// src/routes/auth.routes.js
+var router = express.Router();
+var CODE_TTL = 15 * 60 * 1e3;
+var emailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || "");
+var norm = (e) => String(e || "").trim().toLowerCase();
+router.post("/register", async (req, res) => {
+  try {
+    const name = (req.body?.name || "").trim();
+    const email = norm(req.body?.email);
+    const password = req.body?.password || "";
+    if (!name) return res.status(400).json({ error: "\u0627\u0644\u0627\u0633\u0645 \u0645\u0637\u0644\u0648\u0628" });
+    if (!emailOk(email)) return res.status(400).json({ error: "\u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u063A\u064A\u0631 \u0635\u062D\u064A\u062D" });
+    if (password.length < 8) return res.status(400).json({ error: "\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0668 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644" });
+    if (await getByEmail(email)) return res.status(409).json({ error: "\u0647\u0630\u0627 \u0627\u0644\u0628\u0631\u064A\u062F \u0645\u0633\u062C\u0651\u0644 \u0645\u0633\u0628\u0642\u064B\u0627" });
+    const code = genCode();
+    const isAdmin = await userCount() === 0 || email === norm(process.env.ADMIN_EMAIL);
+    await createUser({
+      name,
+      email,
+      password: hashPassword(password),
+      verified: false,
+      isAdmin,
+      codeHash: hashCode(code),
+      codeExp: Date.now() + CODE_TTL,
+      codePurpose: "verify",
+      codeAttempts: 0
+    });
+    const m = await sendCode(email, code, "verify");
+    res.json({ ok: true, email, mode: mailMode(), devCode: m.dev ? code : void 0 });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "\u062A\u0639\u0630\u0651\u0631 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062D\u0633\u0627\u0628" });
+  }
+});
+router.post("/verify", async (req, res) => {
+  try {
+    const email = norm(req.body?.email);
+    const code = req.body?.code || "";
+    const u = await getByEmail(email);
+    if (!u) return res.status(404).json({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+    if (u.verified) {
+      setSession(res, u.id);
+      return res.json({ ok: true, user: publicUser(u) });
+    }
+    if (!u.codeHash || u.codePurpose !== "verify" || Date.now() > u.codeExp) return res.status(400).json({ error: "\u0627\u0646\u062A\u0647\u062A \u0635\u0644\u0627\u062D\u064A\u0629 \u0627\u0644\u0631\u0645\u0632\u060C \u0627\u0637\u0644\u0628 \u0631\u0645\u0632\u064B\u0627 \u062C\u062F\u064A\u062F\u064B\u0627" });
+    if ((u.codeAttempts || 0) >= 5) return res.status(429).json({ error: "\u0645\u062D\u0627\u0648\u0644\u0627\u062A \u0643\u062B\u064A\u0631\u0629\u060C \u0627\u0637\u0644\u0628 \u0631\u0645\u0632\u064B\u0627 \u062C\u062F\u064A\u062F\u064B\u0627" });
+    if (hashCode(code) !== u.codeHash) {
+      await updateUser(u.id, { codeAttempts: (u.codeAttempts || 0) + 1 });
+      return res.status(400).json({ error: "\u0627\u0644\u0631\u0645\u0632 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D" });
+    }
+    await updateUser(u.id, { verified: true, codeHash: null, codeExp: null, codePurpose: null, codeAttempts: 0 });
+    await addNotification(u.id, "\u0645\u0631\u062D\u0628\u064B\u0627 \u0628\u0643 \u0641\u064A \u0633\u0648\u0628\u0631 \u0622\u0628 \u{1F389}", "\u{1F44B}");
+    setSession(res, u.id);
+    res.json({ ok: true, user: publicUser(await getById(u.id)) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "\u062A\u0639\u0630\u0651\u0631 \u0627\u0644\u062A\u0641\u0639\u064A\u0644" });
+  }
+});
+router.post("/resend", async (req, res) => {
+  try {
+    const email = norm(req.body?.email);
+    const u = await getByEmail(email);
+    if (!u) return res.status(404).json({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+    if (u.verified) return res.status(400).json({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u0645\u0641\u0639\u0651\u0644 \u0628\u0627\u0644\u0641\u0639\u0644" });
+    const code = genCode();
+    await updateUser(u.id, { codeHash: hashCode(code), codeExp: Date.now() + CODE_TTL, codePurpose: "verify", codeAttempts: 0 });
+    const m = await sendCode(email, code, "verify");
+    res.json({ ok: true, devCode: m.dev ? code : void 0 });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "\u062E\u0637\u0623" });
+  }
+});
+router.post("/login", async (req, res) => {
+  try {
+    const email = norm(req.body?.email);
+    const u = await getByEmail(email);
+    if (!u || !verifyPassword(req.body?.password || "", u.password)) return res.status(401).json({ error: "\u0627\u0644\u0628\u0631\u064A\u062F \u0623\u0648 \u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629" });
+    if (!u.verified) return res.status(403).json({ error: "\u0641\u0639\u0651\u0644 \u062D\u0633\u0627\u0628\u0643 \u0623\u0648\u0644\u064B\u0627", needVerify: true, email });
+    setSession(res, u.id);
+    res.json({ ok: true, user: publicUser(u) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "\u062A\u0639\u0630\u0651\u0631 \u0627\u0644\u062F\u062E\u0648\u0644" });
+  }
+});
+router.post("/logout", (req, res) => {
+  clearSession(res);
+  res.json({ ok: true });
+});
+router.get("/me", (req, res) => res.json({ user: publicUser(req.user) }));
+router.post("/forgot", async (req, res) => {
+  try {
+    const email = norm(req.body?.email);
+    const u = await getByEmail(email);
+    if (u) {
+      const code = genCode();
+      await updateUser(u.id, { codeHash: hashCode(code), codeExp: Date.now() + CODE_TTL, codePurpose: "reset", codeAttempts: 0 });
+      const m = await sendCode(email, code, "reset");
+      return res.json({ ok: true, devCode: m.dev ? code : void 0 });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "\u062E\u0637\u0623" });
+  }
+});
+router.post("/reset", async (req, res) => {
+  try {
+    const email = norm(req.body?.email);
+    const code = req.body?.code || "";
+    const password = req.body?.password || "";
+    const u = await getByEmail(email);
+    if (!u) return res.status(400).json({ error: "\u062A\u0639\u0630\u0651\u0631 \u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u062A\u0639\u064A\u064A\u0646" });
+    if (!u.codeHash || u.codePurpose !== "reset" || Date.now() > u.codeExp) return res.status(400).json({ error: "\u0627\u0646\u062A\u0647\u062A \u0635\u0644\u0627\u062D\u064A\u0629 \u0627\u0644\u0631\u0645\u0632" });
+    if ((u.codeAttempts || 0) >= 5) return res.status(429).json({ error: "\u0645\u062D\u0627\u0648\u0644\u0627\u062A \u0643\u062B\u064A\u0631\u0629" });
+    if (hashCode(code) !== u.codeHash) {
+      await updateUser(u.id, { codeAttempts: (u.codeAttempts || 0) + 1 });
+      return res.status(400).json({ error: "\u0627\u0644\u0631\u0645\u0632 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D" });
+    }
+    if (password.length < 8) return res.status(400).json({ error: "\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0668 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644" });
+    await updateUser(u.id, { password: hashPassword(password), verified: true, codeHash: null, codeExp: null, codePurpose: null, codeAttempts: 0 });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "\u062E\u0637\u0623" });
+  }
+});
+var auth_routes_default = router;
+
+// src/routes/app.routes.js
+import express2 from "express";
+
 // src/compare.js
 var round2 = (n) => Math.round(n * 100) / 100;
 function flatItems(store) {
@@ -485,9 +812,9 @@ function flatItems(store) {
 }
 function cartSubtotal(store, cart) {
   const items = flatItems(store);
-  return Object.entries(cart || {}).reduce((sum, [id, q]) => {
+  return Object.entries(cart || {}).reduce((sum, [id, q2]) => {
     const it = items.find((i) => i.id === id);
-    return sum + (it ? it.p * q : 0);
+    return sum + (it ? it.p * q2 : 0);
   }, 0);
 }
 function computeOffers(store, cart = {}, subs = {}) {
@@ -533,11 +860,11 @@ function computeOffers(store, cart = {}, subs = {}) {
 }
 
 // src/live/hungerstation.js
-import fs3 from "fs";
-import path3 from "path";
-import { fileURLToPath as fileURLToPath3 } from "url";
-var __dirname3 = path3.dirname(fileURLToPath3(import.meta.url));
-var CACHE = path3.join(process.env.DATA_DIR || path3.join(process.cwd(), "data"), "live-data.json");
+import fs2 from "fs";
+import path2 from "path";
+import { fileURLToPath as fileURLToPath2 } from "url";
+var __dirname2 = path2.dirname(fileURLToPath2(import.meta.url));
+var CACHE = path2.join(process.env.DATA_DIR || path2.join(process.cwd(), "data"), "live-data.json");
 var SCRAPE = {
   source: "\u0647\u0646\u0642\u0631\u0633\u062A\u064A\u0634\u0646",
   location: "\u062D\u064A \u0627\u0644\u0645\u0648\u0646\u0633\u064A\u0629\u060C \u0627\u0644\u0631\u064A\u0627\u0636",
@@ -563,14 +890,14 @@ var SCRAPE = {
 };
 function loadLive() {
   try {
-    return JSON.parse(fs3.readFileSync(CACHE, "utf8"));
+    return JSON.parse(fs2.readFileSync(CACHE, "utf8"));
   } catch {
     return null;
   }
 }
 function saveLive(data) {
-  fs3.mkdirSync(path3.dirname(CACHE), { recursive: true });
-  fs3.writeFileSync(CACHE, JSON.stringify(data, null, 2), "utf8");
+  fs2.mkdirSync(path2.dirname(CACHE), { recursive: true });
+  fs2.writeFileSync(CACHE, JSON.stringify(data, null, 2), "utf8");
 }
 function mergeLive(store, live) {
   if (!live || !live.stores || !live.stores[store.id]) return store;
@@ -649,46 +976,139 @@ async function refreshLive() {
 
 // src/routes/app.routes.js
 var router2 = express2.Router();
-var publicApps = () => Object.fromEntries(
-  Object.entries(APPS).map(([id, a]) => [id, { name: a.name, short: a.short, color: a.color, text: a.text, sub: a.sub, promoLabel: a.promo.label || "" }])
-);
-var summary = (s) => ({
-  id: s.id,
-  kind: s.kind,
-  name: s.name,
-  cat: s.cat,
-  color: s.color,
-  rating: s.rating,
-  eta: s.eta,
-  logo: s.logo,
-  on: s.on,
-  live: !!s.live,
-  liveSource: s.liveSource,
-  liveAt: s.liveAt
-});
+var round22 = (n) => Math.round(n * 100) / 100;
+var publicApps = () => Object.fromEntries(Object.entries(APPS).map(([id, a]) => [id, { name: a.name, short: a.short, color: a.color, text: a.text, sub: a.sub, promoLabel: a.promo.label || "" }]));
+var summary = (s) => ({ id: s.id, kind: s.kind, name: s.name, cat: s.cat, color: s.color, rating: s.rating, eta: s.eta, logo: s.logo, on: s.on, live: !!s.live, liveSource: s.liveSource, liveAt: s.liveAt });
+var STATUS_FLOW = ["pending", "confirmed", "preparing", "on_the_way", "delivered"];
+var STATUS_AR = { pending: "\u0628\u0627\u0646\u062A\u0638\u0627\u0631 \u0627\u0644\u062A\u0623\u0643\u064A\u062F", confirmed: "\u062A\u0645 \u0627\u0644\u062A\u0623\u0643\u064A\u062F", preparing: "\u0642\u064A\u062F \u0627\u0644\u062A\u062C\u0647\u064A\u0632", on_the_way: "\u0641\u064A \u0627\u0644\u0637\u0631\u064A\u0642", delivered: "\u062A\u0645 \u0627\u0644\u062A\u0648\u0635\u064A\u0644", cancelled: "\u0645\u0644\u063A\u064A" };
+var STATUS_ICON = { confirmed: "\u2705", preparing: "\u{1F468}\u200D\u{1F373}", on_the_way: "\u{1F6F5}", delivered: "\u{1F389}" };
+function scheduleOrderProgress(orderId, userId) {
+  const steps = [["confirmed", 15e3], ["preparing", 35e3], ["on_the_way", 7e4], ["delivered", 12e4]];
+  for (const [status, ms] of steps) {
+    setTimeout(async () => {
+      try {
+        const o = await getOrder(orderId);
+        if (!o || o.status === "delivered" || o.status === "cancelled") return;
+        await updateOrderStatus(orderId, status);
+        await addNotification(userId, `\u0637\u0644\u0628\u0643 #${orderId}: ${STATUS_AR[status]}`, STATUS_ICON[status] || "\u{1F514}");
+      } catch {
+      }
+    }, ms);
+  }
+}
+function couponDiscount(coupon, subtotal) {
+  if (!coupon || !coupon.active) return 0;
+  if (coupon.min_order && subtotal < coupon.min_order) return 0;
+  let d = coupon.type === "percent" ? subtotal * coupon.value / 100 : coupon.value;
+  if (coupon.cap) d = Math.min(d, coupon.cap);
+  return round22(d);
+}
 router2.get("/config", (req, res) => {
   const live = loadLive();
-  res.json({ location: LOCATION, apps: publicApps(), live: live ? { source: live.source, fetchedAt: live.fetchedAt } : null });
+  res.json({ location: "\u062D\u064A \u0627\u0644\u0645\u0648\u0646\u0633\u064A\u0629\u060C \u0627\u0644\u0631\u064A\u0627\u0636", apps: publicApps(), live: live ? { source: live.source, fetchedAt: live.fetchedAt } : null });
 });
-router2.get("/stores", requireVerified, (req, res) => {
+router2.use(requireVerified);
+router2.get("/stores", async (req, res) => {
   const live = loadLive();
-  res.json(STORES.map((s) => summary(mergeLive(s, live))));
+  const list = await listRestaurants();
+  res.json(list.map((s) => summary(mergeLive(s, live))));
 });
-router2.get("/stores/:id", requireVerified, (req, res) => {
+router2.get("/stores/:id", async (req, res) => {
   const live = loadLive();
-  const s = STORES.find((x) => x.id === req.params.id);
-  if (!s) return res.status(404).json({ error: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
-  res.json(mergeLive(s, live));
+  const s0 = await getRestaurant(req.params.id);
+  if (!s0) return res.status(404).json({ error: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+  const s = mergeLive(s0, live);
+  const [stats, reviews] = await Promise.all([ratingStats(s.id), reviewsByRestaurant(s.id)]);
+  res.json({ ...s, ratingStats: stats, reviews });
 });
-router2.post("/compare", requireVerified, (req, res) => {
+router2.post("/compare", async (req, res) => {
   const { storeId, cart = {}, subs = {} } = req.body || {};
   const live = loadLive();
-  const s0 = STORES.find((x) => x.id === storeId);
+  const s0 = await getRestaurant(storeId);
   if (!s0) return res.status(404).json({ error: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
   const s = mergeLive(s0, live);
   res.json({ store: summary(s), live: s.live ? { source: s.liveSource, at: s.liveAt, app: s.liveApp } : null, ...computeOffers(s, cart, subs) });
 });
-router2.post("/refresh-live", requireVerified, async (req, res) => {
+router2.get("/coupons", async (req, res) => {
+  res.json({ coupons: (await listCoupons()).filter((c) => c.active) });
+});
+router2.post("/coupon/validate", async (req, res) => {
+  const { code, subtotal = 0 } = req.body || {};
+  const c = await getCoupon(code);
+  if (!c || !c.active) return res.status(404).json({ error: "\u0643\u0648\u0628\u0648\u0646 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D" });
+  if (c.min_order && subtotal < c.min_order) return res.status(400).json({ error: `\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u062F\u0646\u0649 ${c.min_order} \u0631.\u0633` });
+  res.json({ ok: true, coupon: c, discount: couponDiscount(c, subtotal) });
+});
+router2.post("/orders", async (req, res) => {
+  try {
+    const { storeId, appId, cart = {}, subs = {}, coupon } = req.body || {};
+    const live = loadLive();
+    const s0 = await getRestaurant(storeId);
+    if (!s0) return res.status(404).json({ error: "\u0627\u0644\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+    const s = mergeLive(s0, live);
+    const { offers } = computeOffers(s, cart, subs);
+    const offer = offers.find((o) => o.appId === appId) || offers[0];
+    if (!offer) return res.status(400).json({ error: "\u0644\u0627 \u064A\u0648\u062C\u062F \u0639\u0631\u0636 \u0635\u0627\u0644\u062D" });
+    let coup = null, cDisc = 0;
+    if (coupon) {
+      coup = await getCoupon(coupon);
+      cDisc = couponDiscount(coup, offer.subtotal);
+    }
+    const items = Object.entries(cart).map(([id, qty]) => {
+      const it = s.menu.flatMap((g) => g.items).find((i) => i.id === id);
+      return it ? { id, name: it.n, qty, price: it.p } : null;
+    }).filter(Boolean);
+    if (!items.length) return res.status(400).json({ error: "\u0627\u0644\u0633\u0644\u0629 \u0641\u0627\u0631\u063A\u0629" });
+    const total = Math.max(0, round22(offer.subtotal + offer.delivery + offer.service - offer.discount - cDisc));
+    const order = await createOrder({
+      userId: req.user.id,
+      restaurantId: s.id,
+      restaurantName: s.name,
+      appId: offer.appId,
+      appName: offer.app.name,
+      items,
+      subtotal: offer.subtotal,
+      delivery: offer.delivery,
+      service: offer.service,
+      discount: round22(offer.discount + cDisc),
+      total,
+      coupon: coup ? coup.code : null,
+      address: req.user.address
+    });
+    await addNotification(req.user.id, `\u062A\u0645 \u0627\u0633\u062A\u0644\u0627\u0645 \u0637\u0644\u0628\u0643 #${order.id} \u0645\u0646 ${s.name} \u{1F9FE}`, "\u{1F9FE}");
+    scheduleOrderProgress(order.id, req.user.id);
+    res.json({ ok: true, order });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "\u062A\u0639\u0630\u0651\u0631 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u0637\u0644\u0628" });
+  }
+});
+router2.get("/orders", async (req, res) => {
+  res.json({ orders: await listOrdersByUser(req.user.id) });
+});
+router2.get("/orders/:id", async (req, res) => {
+  const o = await getOrder(Number(req.params.id));
+  if (!o || o.userId !== req.user.id) return res.status(404).json({ error: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+  res.json({ order: o, flow: STATUS_FLOW, labels: STATUS_AR });
+});
+router2.post("/reviews", async (req, res) => {
+  const { orderId, rating, comment } = req.body || {};
+  const o = await getOrder(Number(orderId));
+  if (!o || o.userId !== req.user.id) return res.status(404).json({ error: "\u0627\u0644\u0637\u0644\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+  if (o.status !== "delivered") return res.status(400).json({ error: "\u064A\u0645\u0643\u0646 \u0627\u0644\u062A\u0642\u064A\u064A\u0645 \u0628\u0639\u062F \u0627\u0644\u062A\u0648\u0635\u064A\u0644 \u0641\u0642\u0637" });
+  if (await userReviewedOrder(req.user.id, o.id)) return res.status(400).json({ error: "\u0642\u064A\u0651\u0645\u062A \u0647\u0630\u0627 \u0627\u0644\u0637\u0644\u0628 \u0645\u0633\u0628\u0642\u064B\u0627" });
+  const r = Math.max(1, Math.min(5, Number(rating) || 0));
+  await addReview({ userId: req.user.id, restaurantId: o.restaurantId, orderId: o.id, rating: r, comment });
+  res.json({ ok: true });
+});
+router2.get("/notifications", async (req, res) => {
+  res.json({ notifications: await listNotifications(req.user.id), unread: await unreadCount(req.user.id) });
+});
+router2.post("/notifications/read", async (req, res) => {
+  await markNotificationsRead(req.user.id);
+  res.json({ ok: true });
+});
+router2.post("/refresh-live", async (req, res) => {
   try {
     const d = await refreshLive();
     res.json({ ok: true, fetchedAt: d.fetchedAt, prices: Object.values(d.stores).reduce((a, s) => a + Object.keys(s.items).length, 0) });
@@ -703,23 +1123,20 @@ import express3 from "express";
 var router3 = express3.Router();
 router3.use(requireVerified);
 router3.get("/", (req, res) => res.json({ user: publicUser(req.user) }));
-router3.put("/", (req, res) => {
+router3.put("/", async (req, res) => {
   const patch = {};
   const name = (req.body?.name || "").trim();
   const address = (req.body?.address || "").trim();
   if (name) patch.name = name;
   if (address) patch.address = address;
-  const u = updateUser(req.user.id, patch);
+  const u = await updateUser(req.user.id, patch);
   res.json({ user: publicUser(u) });
 });
-router3.get("/favorites", (req, res) => res.json({ favorites: req.user.favorites || [] }));
-router3.post("/favorites", (req, res) => {
+router3.get("/favorites", async (req, res) => res.json({ favorites: await getFavorites(req.user.id) }));
+router3.post("/favorites", async (req, res) => {
   const { storeId } = req.body || {};
-  if (!STORES.find((s) => s.id === storeId)) return res.status(400).json({ error: "\u0645\u062A\u062C\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D" });
-  const fav = new Set(req.user.favorites || []);
-  fav.has(storeId) ? fav.delete(storeId) : fav.add(storeId);
-  const u = updateUser(req.user.id, { favorites: [...fav] });
-  res.json({ favorites: u.favorites });
+  const favorites = await toggleFavorite(req.user.id, storeId);
+  res.json({ favorites });
 });
 var profile_routes_default = router3;
 
@@ -727,11 +1144,63 @@ var profile_routes_default = router3;
 import express4 from "express";
 var router4 = express4.Router();
 router4.use(requireAdmin);
-router4.get("/users", (req, res) => res.json({ users: listUsers().map(publicUser) }));
-router4.delete("/users/:id", (req, res) => {
+router4.get("/stats", async (req, res) => {
+  const p = getPool();
+  const [u, ru, r, o] = await Promise.all([
+    p.query(`SELECT COUNT(*)::int c, COUNT(*) FILTER (WHERE verified)::int v FROM users`),
+    p.query(`SELECT COUNT(*)::int c FROM restaurants WHERE active=true`),
+    p.query(`SELECT COUNT(*)::int c FROM reviews`),
+    p.query(`SELECT COUNT(*)::int c, COUNT(*) FILTER (WHERE status NOT IN ('delivered','cancelled'))::int active, COALESCE(SUM(total),0)::numeric(12,2) revenue FROM orders`)
+  ]);
+  res.json({ users: u.rows[0].c, verified: u.rows[0].v, restaurants: ru.rows[0].c, reviews: r.rows[0].c, orders: o.rows[0].c, activeOrders: o.rows[0].active, revenue: Number(o.rows[0].revenue) });
+});
+router4.get("/users", async (req, res) => res.json({ users: (await listUsers()).map(publicUser) }));
+router4.delete("/users/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (id === req.user.id) return res.status(400).json({ error: "\u0644\u0627 \u064A\u0645\u0643\u0646\u0643 \u062D\u0630\u0641 \u062D\u0633\u0627\u0628\u0643" });
-  deleteUser(id);
+  await deleteUser(id);
+  res.json({ ok: true });
+});
+router4.get("/restaurants", async (req, res) => res.json({ restaurants: await listRestaurants(true) }));
+router4.post("/restaurants", async (req, res) => {
+  const b = req.body || {};
+  if (!b.id || !b.name) return res.status(400).json({ error: "\u0627\u0644\u0645\u0639\u0631\u0651\u0641 \u0648\u0627\u0644\u0627\u0633\u0645 \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
+  if (await getRestaurant(b.id)) return res.status(409).json({ error: "\u0627\u0644\u0645\u0639\u0631\u0651\u0641 \u0645\u0633\u062A\u062E\u062F\u0645" });
+  res.json({ restaurant: await createRestaurant(b) });
+});
+router4.put("/restaurants/:id", async (req, res) => res.json({ restaurant: await updateRestaurant(req.params.id, req.body || {}) }));
+router4.delete("/restaurants/:id", async (req, res) => {
+  await deleteRestaurant(req.params.id);
+  res.json({ ok: true });
+});
+router4.post("/restaurants/:id/menu", async (req, res) => {
+  await addMenuItem(req.params.id, req.body || {});
+  res.json({ restaurant: await getRestaurant(req.params.id) });
+});
+router4.delete("/restaurants/:id/menu/:key", async (req, res) => {
+  await deleteMenuItem(req.params.id, req.params.key);
+  res.json({ restaurant: await getRestaurant(req.params.id) });
+});
+router4.get("/orders", async (req, res) => res.json({ orders: await listAllOrders() }));
+router4.post("/orders/:id/status", async (req, res) => {
+  const { status } = req.body || {};
+  const ok = ["pending", "confirmed", "preparing", "on_the_way", "delivered", "cancelled"];
+  if (!ok.includes(status)) return res.status(400).json({ error: "\u062D\u0627\u0644\u0629 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629" });
+  const o = await updateOrderStatus(Number(req.params.id), status);
+  if (o) {
+    const lbl = { confirmed: "\u062A\u0645 \u062A\u0623\u0643\u064A\u062F", preparing: "\u0642\u064A\u062F \u062A\u062C\u0647\u064A\u0632", on_the_way: "\u0641\u064A \u0627\u0644\u0637\u0631\u064A\u0642", delivered: "\u062A\u0645 \u062A\u0648\u0635\u064A\u0644", cancelled: "\u0623\u064F\u0644\u063A\u064A" }[status] || status;
+    await addNotification(o.userId, `\u0637\u0644\u0628\u0643 #${o.id}: ${lbl}`, "\u{1F6F5}");
+  }
+  res.json({ order: o });
+});
+router4.get("/coupons", async (req, res) => res.json({ coupons: await listCoupons() }));
+router4.post("/coupons", async (req, res) => {
+  const b = req.body || {};
+  if (!b.code || !b.type) return res.status(400).json({ error: "\u0627\u0644\u0643\u0648\u062F \u0648\u0627\u0644\u0646\u0648\u0639 \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
+  res.json({ coupon: await upsertCoupon(b) });
+});
+router4.delete("/coupons/:code", async (req, res) => {
+  await deleteCoupon(req.params.code);
   res.json({ ok: true });
 });
 var admin_routes_default = router4;
@@ -741,11 +1210,11 @@ var ASSETS = { "index.html": { "type": "text/html; charset=utf-8", "b64": "PCFET
 var LIVE_SEED = { "source": "\u0647\u0646\u0642\u0631\u0633\u062A\u064A\u0634\u0646", "sourceUrl": "https://hungerstation.com/sa-ar/restaurant/\u0627\u0644\u0631\u064A\u0627\u0636/\u0627\u0644\u0645\u0648\u0646\u0633\u064A\u0629/3792", "location": "\u062D\u064A \u0627\u0644\u0645\u0648\u0646\u0633\u064A\u0629\u060C \u0627\u0644\u0631\u064A\u0627\u0636", "fetchedAtISO": "2026-06-14T01:42:00+03:00", "fetchedAt": "2026-06-14 \xB7 01:42 (\u062A\u0648\u0642\u064A\u062A \u0627\u0644\u0631\u064A\u0627\u0636)", "stores": { "mcd": { "app": "hungerstation", "etaText": "15\u201330 \u062F", "deliveryFee": null, "items": { "bigtasty": 34, "bigmac": 27, "mcchicken": 29, "nuggets": 28, "fries": 9, "cola": 7, "mcflurry": 12 } } } };
 
 // deploy-entry.js
-var DATA_DIR2 = process.env.DATA_DIR || path4.join(process.cwd(), "data");
+var DATA_DIR = process.env.DATA_DIR || path3.join(process.cwd(), "data");
 try {
-  fs4.mkdirSync(DATA_DIR2, { recursive: true });
-  const f = path4.join(DATA_DIR2, "live-data.json");
-  if (!fs4.existsSync(f)) fs4.writeFileSync(f, JSON.stringify(LIVE_SEED, null, 2));
+  fs3.mkdirSync(DATA_DIR, { recursive: true });
+  const f = path3.join(DATA_DIR, "live-data.json");
+  if (!fs3.existsSync(f)) fs3.writeFileSync(f, JSON.stringify(LIVE_SEED, null, 2));
 } catch {
 }
 var app = express5();
@@ -765,4 +1234,7 @@ app.get("/styles.css", (req, res) => send(res, "styles.css"));
 app.get("/auth.css", (req, res) => send(res, "auth.css"));
 app.get("/app.js", (req, res) => send(res, "app.js"));
 var PORT = process.env.PORT || 3e3;
-app.listen(PORT, () => console.log(`\u{1F354} super-app \u0639\u0644\u0649 \u0627\u0644\u0645\u0646\u0641\u0630 ${PORT}`));
+init().then(() => app.listen(PORT, () => console.log(`\u{1F354} super-app + Postgres \u0639\u0644\u0649 \u0627\u0644\u0645\u0646\u0641\u0630 ${PORT}`))).catch((err) => {
+  console.error("\u0641\u0634\u0644 \u062A\u0647\u064A\u0626\u0629 \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A:", err);
+  process.exit(1);
+});
